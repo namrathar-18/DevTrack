@@ -1,176 +1,176 @@
 import { useEffect, useState, useCallback } from "react";
-import {
-    getTasks,
-    createTask,
-    updateTask,
-    deleteTask
-} from "./services/api";
-
+import { getTasks, createTask, updateTask, deleteTask } from "./services/api";
 import "./App.css";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── SVG Icon System ──────────────────────────────────────────────────────────
+// All icons use a 16×16 viewBox, no fill, stroke="currentColor"
 
-const STATUS_ORDER = ["pending", "in-progress", "completed"];
-
-const STATUS_META = {
-    pending:     { label: "Pending",     icon: "⏳", cls: "badge-pending" },
-    "in-progress": { label: "In Progress", icon: "🔄", cls: "badge-inprogress" },
-    completed:   { label: "Completed",   icon: "✅", cls: "badge-completed" }
+const PATHS = {
+    task:     "M5.5 7.5l2 2 3.5-4M2 3h12v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3z",
+    plus:     "M8 3v10M3 8h10",
+    pencil:   "M10.5 2.5l3 3-8.5 8.5H2v-3L10.5 2.5z",
+    trash:    "M3 5h10M6 5V3.5h4V5m-5 0v7a1 1 0 001 1h4a1 1 0 001-1V5",
+    search:   "M11 11l2.5 2.5M7 12a5 5 0 100-10 5 5 0 000 10z",
+    x:        "M3 3l10 10M13 3L3 13",
+    check:    "M3 8l3.5 3.5L13 5",
+    calendar: "M2 4.5h12M5 2v3M11 2v3M3 2.5h10a.5.5 0 01.5.5v10a.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5z",
+    clock:    "M8 2a6 6 0 100 12A6 6 0 008 2zM8 5v3.5l2.5 1.5",
+    alert:    "M8 5.5v4M8 11.5v.5M2 13.5h12L8 2.5 2 13.5z",
+    arrow:    "M3 8h10M9 5l3 3-3 3",
+    bar:      "M3 13h2V8H3zM7 13h2V5H7zM11 13h2V9h-2",
+    list:     "M3 5h10M3 8h10M3 11h6",
+    save:     "M2.5 2.5h8l3 3v8a.5.5 0 01-.5.5h-10a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5zM9.5 2.5v4h-5v-4M5 9.5h6",
+    filter:   "M2 4.5h12M4 8h8M6.5 11.5h3",
 };
 
-const PRIORITY_META = {
-    high:   { label: "High",   icon: "🔴", cls: "badge-priority-high" },
-    medium: { label: "Medium", icon: "🟡", cls: "badge-priority-medium" },
-    low:    { label: "Low",    icon: "🟢", cls: "badge-priority-low" }
+function Icon({ name, size = 14, className = "" }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+            aria-hidden="true"
+        >
+            <path d={PATHS[name] ?? ""} />
+        </svg>
+    );
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const STATUS_NEXT = {
+    pending:      "in-progress",
+    "in-progress":"completed",
+    completed:    "pending",
 };
 
-function isOverdue(task) {
-    if (!task.dueDate || task.status === "completed") return false;
-    return new Date(task.dueDate) < new Date();
+const STATUS_CFG = {
+    pending:       { label: "Pending",     cls: "s-pending" },
+    "in-progress": { label: "In Progress", cls: "s-inprogress" },
+    completed:     { label: "Completed",   cls: "s-completed" },
+};
+
+const PRIORITY_CFG = {
+    high:   { label: "High",   stripe: "tc-stripe-high",   pind: "pind-high",   pdot: "pdot-high",   ptxt: "pri-high" },
+    medium: { label: "Medium", stripe: "tc-stripe-medium", pind: "pind-medium", pdot: "pdot-medium", ptxt: "pri-medium" },
+    low:    { label: "Low",    stripe: "tc-stripe-low",    pind: "pind-low",    pdot: "pdot-low",    ptxt: "pri-low" },
+};
+
+function isOverdue(t) {
+    return t.dueDate && t.status !== "completed" && new Date(t.dueDate) < new Date();
 }
 
-function formatDate(dateStr) {
-    if (!dateStr) return null;
-    return new Date(dateStr).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric"
-    });
+function fmtDate(d) {
+    if (!d) return null;
+    return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-let toastIdCounter = 0;
+// ─── Toast hook ───────────────────────────────────────────────────────────────
 
-// ─── Toast System ─────────────────────────────────────────────────────────────
+let _tid = 0;
 
 function useToasts() {
     const [toasts, setToasts] = useState([]);
 
-    const addToast = useCallback((msg, type = "success") => {
-        const id = ++toastIdCounter;
-        setToasts(prev => [...prev, { id, msg, type, removing: false }]);
+    const push = useCallback((message, type = "success") => {
+        const id = ++_tid;
+        setToasts(p => [...p, { id, message, type }]);
         setTimeout(() => {
-            setToasts(prev =>
-                prev.map(t => t.id === id ? { ...t, removing: true } : t)
-            );
-            setTimeout(() => {
-                setToasts(prev => prev.filter(t => t.id !== id));
-            }, 280);
-        }, 3500);
+            setToasts(p => p.map(t => t.id === id ? { ...t, exiting: true } : t));
+            setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 250);
+        }, 3600);
     }, []);
 
-    return { toasts, addToast };
+    return { toasts, push };
 }
 
-// ─── Toast Component ──────────────────────────────────────────────────────────
+// ─── StatusBadge ─────────────────────────────────────────────────────────────
 
-function ToastContainer({ toasts }) {
-    const icons = { success: "✅", error: "❌", info: "ℹ️" };
-    if (!toasts.length) return null;
+function StatusBadge({ status }) {
+    const cfg = STATUS_CFG[status] ?? STATUS_CFG.pending;
     return (
-        <div className="toast-container" aria-live="polite">
-            {toasts.map(t => (
-                <div
-                    key={t.id}
-                    className={`toast toast-${t.type}${t.removing ? " removing" : ""}`}
-                    role="alert"
-                >
-                    <span className="toast-icon">{icons[t.type]}</span>
-                    <span className="toast-msg">{t.msg}</span>
-                </div>
-            ))}
-        </div>
+        <span className={`sbadge ${cfg.cls}`}>
+            <span className="sbadge-dot" />
+            {cfg.label}
+        </span>
     );
 }
 
-// ─── Confirm Modal ────────────────────────────────────────────────────────────
+// ─── Stat card ────────────────────────────────────────────────────────────────
 
-function ConfirmModal({ title, message, onConfirm, onCancel }) {
+function Stat({ icon, num, label, variant }) {
     return (
-        <div className="modal-overlay" onClick={onCancel}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-icon">🗑️</div>
-                <h3>{title}</h3>
-                <p>{message}</p>
-                <div className="modal-actions">
-                    <button className="btn-ghost" onClick={onCancel}>Cancel</button>
-                    <button className="btn-danger" onClick={onConfirm}>Delete Task</button>
-                </div>
+        <div className={`stat stat-${variant}`}>
+            <div className="stat-ico">
+                <Icon name={icon} size={15} />
+            </div>
+            <div className="stat-info">
+                <span className="stat-num">{num}</span>
+                <span className="stat-lbl">{label}</span>
             </div>
         </div>
     );
 }
 
-// ─── Stat Card ────────────────────────────────────────────────────────────────
+// ─── Inline Edit ─────────────────────────────────────────────────────────────
 
-function StatCard({ icon, value, label, color }) {
-    return (
-        <div className="stat-card" style={{ "--stat-color": color }}>
-            <span className="stat-icon">{icon}</span>
-            <span className="stat-value">{value}</span>
-            <span className="stat-label">{label}</span>
-        </div>
-    );
-}
-
-// ─── Inline Edit Form ─────────────────────────────────────────────────────────
-
-function InlineEditForm({ task, onSave, onCancel }) {
-    const [editData, setEditData] = useState({
+function InlineEdit({ task, onSave, onCancel }) {
+    const [d, setD] = useState({
         title:       task.title,
-        description: task.description || "",
+        description: task.description ?? "",
         priority:    task.priority,
-        dueDate:     task.dueDate
-            ? new Date(task.dueDate).toISOString().split("T")[0]
-            : ""
+        dueDate:     task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : "",
     });
 
-    const handleChange = e => {
-        const { name, value } = e.target;
-        setEditData(prev => ({ ...prev, [name]: value }));
-    };
+    const set = (k, v) => setD(p => ({ ...p, [k]: v }));
 
-    const handleSave = () => {
-        if (!editData.title.trim()) return;
-        onSave({
-            ...editData,
-            dueDate: editData.dueDate || null
-        });
+    const save = () => {
+        if (!d.title.trim()) return;
+        onSave({ ...d, dueDate: d.dueDate || null });
     };
 
     return (
-        <div className="inline-edit">
+        <div className="ie-wrap">
             <input
-                type="text"
-                name="title"
-                value={editData.title}
-                onChange={handleChange}
+                className="ie-input"
+                value={d.title}
+                onChange={e => set("title", e.target.value)}
                 placeholder="Task title"
                 autoFocus
             />
             <textarea
-                name="description"
-                value={editData.description}
-                onChange={handleChange}
+                className="ie-textarea"
+                value={d.description}
+                onChange={e => set("description", e.target.value)}
                 placeholder="Description (optional)"
+                rows={2}
             />
-            <div className="inline-edit-row form-row">
-                <select name="priority" value={editData.priority} onChange={handleChange}>
+            <div className="ie-row">
+                <select className="ie-select" value={d.priority} onChange={e => set("priority", e.target.value)}>
                     <option value="low">Low Priority</option>
                     <option value="medium">Medium Priority</option>
                     <option value="high">High Priority</option>
                 </select>
                 <input
+                    className="ie-date"
                     type="date"
-                    name="dueDate"
-                    value={editData.dueDate}
-                    onChange={handleChange}
+                    value={d.dueDate}
+                    onChange={e => set("dueDate", e.target.value)}
                 />
             </div>
-            <div className="inline-edit-actions">
-                <button className="btn-primary" style={{ width: "auto", padding: "8px 18px", marginTop: 0 }} onClick={handleSave}>
-                    💾 Save Changes
+            <div className="ie-actions">
+                <button className="btn-sm btn-primary" onClick={save}>
+                    <Icon name="save" size={12} /> Save
                 </button>
-                <button className="btn-ghost" onClick={onCancel}>Cancel</button>
+                <button className="btn-sm btn-ghost" onClick={onCancel}>
+                    Cancel
+                </button>
             </div>
         </div>
     );
@@ -178,199 +178,233 @@ function InlineEditForm({ task, onSave, onCancel }) {
 
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
-function TaskCard({ task, onStatusChange, onDelete, onSaveEdit }) {
+function TaskCard({ task, onStatusChange, onDelete, onEdit }) {
     const [editing, setEditing] = useState(false);
-    const overdue = isOverdue(task);
-    const statusMeta = STATUS_META[task.status] || STATUS_META.pending;
-    const priorityMeta = PRIORITY_META[task.priority] || PRIORITY_META.medium;
+    const overdue  = isOverdue(task);
+    const pcfg     = PRIORITY_CFG[task.priority] ?? PRIORITY_CFG.medium;
 
-    const handleSave = async (data) => {
-        await onSaveEdit(task._id, data);
+    const handleSave = async data => {
+        await onEdit(task._id, data);
         setEditing(false);
     };
 
     return (
-        <article className={`task-card priority-${task.priority}`}>
-            <div className="task-priority-bar" />
-            <div className="task-body">
-                <div className="task-content">
-                    {editing ? (
-                        <InlineEditForm
-                            task={task}
-                            onSave={handleSave}
-                            onCancel={() => setEditing(false)}
-                        />
-                    ) : (
-                        <>
-                            <div className="task-title-row">
-                                <h3 className={task.status === "completed" ? "completed-text" : ""}>
-                                    {task.title}
-                                </h3>
-                                <span className={`badge ${statusMeta.cls}`}>
-                                    {statusMeta.icon} {statusMeta.label}
-                                </span>
-                                <span className={`badge ${priorityMeta.cls}`}>
-                                    {priorityMeta.label}
-                                </span>
-                            </div>
-
-                            {task.description && (
-                                <p className="task-description">{task.description}</p>
-                            )}
-
-                            <div className="task-meta">
-                                <span className="task-meta-item">
-                                    <span className="icon">📅</span>
-                                    Created {formatDate(task.createdAt)}
-                                </span>
-                                {task.dueDate && (
-                                    <span className={`task-meta-item${overdue ? " overdue" : ""}`}>
-                                        <span className="icon">{overdue ? "🚨" : "🗓️"}</span>
-                                        Due {formatDate(task.dueDate)}
-                                        {overdue && " (Overdue)"}
-                                    </span>
+        <div className="task-card">
+            <div className={`tc-stripe ${pcfg.stripe}`} />
+            <div className="tc-body">
+                {editing ? (
+                    <InlineEdit task={task} onSave={handleSave} onCancel={() => setEditing(false)} />
+                ) : (
+                    <>
+                        <div className="tc-top">
+                            <div className="tc-title-area">
+                                <div className="tc-title-row">
+                                    <span className={`pind ${pcfg.pind}`} />
+                                    <h3 className={`tc-title${task.status === "completed" ? " done" : ""}`}>
+                                        {task.title}
+                                    </h3>
+                                </div>
+                                {task.description && (
+                                    <p className="tc-desc">{task.description}</p>
                                 )}
                             </div>
-                        </>
-                    )}
-                </div>
+                            <StatusBadge status={task.status} />
+                        </div>
 
-                {!editing && (
-                    <div className="task-actions">
-                        <button
-                            className="btn-icon btn-secondary"
-                            title="Edit task"
-                            onClick={() => setEditing(true)}
-                        >
-                            ✏️
-                        </button>
-                        <button
-                            className="btn-secondary"
-                            title="Cycle status"
-                            onClick={() => onStatusChange(task)}
-                            style={{ fontSize: "12px", padding: "7px 10px" }}
-                        >
-                            🔄 Status
-                        </button>
-                        <button
-                            className="btn-icon btn-danger"
-                            title="Delete task"
-                            onClick={() => onDelete(task._id, task.title)}
-                        >
-                            🗑️
-                        </button>
-                    </div>
+                        <div className="tc-bottom">
+                            <div className="tc-meta">
+                                <span className="tc-meta-item">
+                                    <Icon name="calendar" size={11} />
+                                    {fmtDate(task.createdAt)}
+                                </span>
+                                {task.dueDate && (
+                                    <span className={`tc-meta-item${overdue ? " overdue" : ""}`}>
+                                        <Icon name={overdue ? "alert" : "clock"} size={11} />
+                                        Due {fmtDate(task.dueDate)}
+                                        {overdue && " · Overdue"}
+                                    </span>
+                                )}
+                                <span className={`tc-priority-text ${pcfg.ptxt}`}>
+                                    {pcfg.label}
+                                </span>
+                            </div>
+
+                            <div className="tc-actions">
+                                <button
+                                    className="btn-sm btn-ghost"
+                                    onClick={() => setEditing(true)}
+                                    title="Edit"
+                                >
+                                    <Icon name="pencil" size={12} />
+                                    Edit
+                                </button>
+                                <button
+                                    className="btn-sm btn-ghost"
+                                    onClick={() => onStatusChange(task)}
+                                    title="Advance status"
+                                >
+                                    <Icon name="arrow" size={12} />
+                                    Status
+                                </button>
+                                <button
+                                    className="btn-sm btn-danger"
+                                    onClick={() => onDelete(task._id, task.title)}
+                                    title="Delete"
+                                >
+                                    <Icon name="trash" size={12} />
+                                </button>
+                            </div>
+                        </div>
+                    </>
                 )}
             </div>
-        </article>
+        </div>
+    );
+}
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+
+function ConfirmModal({ taskTitle, onConfirm, onCancel }) {
+    return (
+        <div className="overlay" onClick={onCancel}>
+            <div className="modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+                <div className="modal-ico-wrap">
+                    <Icon name="trash" size={18} />
+                </div>
+                <h3>Delete Task</h3>
+                <p className="modal-desc">
+                    You are about to permanently delete{" "}
+                    <strong>"{taskTitle}"</strong>. This cannot be undone.
+                </p>
+                <div className="modal-footer">
+                    <button className="btn-md btn-ghost" onClick={onCancel}>Cancel</button>
+                    <button className="btn-md btn-danger-fill" onClick={onConfirm}>Delete</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── Toasts ───────────────────────────────────────────────────────────────────
+
+function ToastStack({ toasts }) {
+    const iconMap = { success: "check", error: "x", info: "arrow" };
+    return (
+        <div className="toast-stack" aria-live="polite">
+            {toasts.map(t => (
+                <div
+                    key={t.id}
+                    className={`toast toast-${t.type}${t.exiting ? " toast-exit" : ""}`}
+                    role="alert"
+                >
+                    <Icon name={iconMap[t.type] ?? "check"} size={13} />
+                    <span>{t.message}</span>
+                </div>
+            ))}
+        </div>
     );
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-function App() {
-    const [tasks, setTasks]     = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [apiOk, setApiOk]     = useState(true);
+const STATUS_TABS = [
+    { key: "all",          label: "All" },
+    { key: "pending",      label: "Pending" },
+    { key: "in-progress",  label: "In Progress" },
+    { key: "completed",    label: "Completed" },
+];
 
-    // Filter / search state
-    const [search,         setSearch]         = useState("");
-    const [filterStatus,   setFilterStatus]   = useState("all");
-    const [filterPriority, setFilterPriority] = useState("all");
+const PRIORITY_TABS = [
+    { key: "all",    label: "All" },
+    { key: "high",   label: "High",   dot: "pdot-high" },
+    { key: "medium", label: "Medium", dot: "pdot-medium" },
+    { key: "low",    label: "Low",    dot: "pdot-low" },
+];
 
-    // Delete modal state
-    const [deleteTarget, setDeleteTarget] = useState(null); // { id, title }
+export default function App() {
+    const [tasks,    setTasks]   = useState([]);
+    const [loading,  setLoading] = useState(true);
+    const [apiOk,    setApiOk]   = useState(true);
 
-    const { toasts, addToast } = useToasts();
+    const [search,          setSearch]          = useState("");
+    const [filterStatus,    setFilterStatus]    = useState("all");
+    const [filterPriority,  setFilterPriority]  = useState("all");
+    const [deleteTarget,    setDeleteTarget]    = useState(null);
+    const [submitting,      setSubmitting]      = useState(false);
 
-    // Create form
-    const [formData, setFormData] = useState({
-        title:       "",
-        description: "",
-        status:      "pending",
-        priority:    "medium",
-        dueDate:     ""
+    const { toasts, push } = useToasts();
+
+    const [form, setForm] = useState({
+        title: "", description: "", status: "pending", priority: "medium", dueDate: ""
     });
 
-    // ── Data loading ──────────────────────────────────────────────────────────
+    // ── Load ─────────────────────────────────────────────────────────────────
 
     const loadTasks = useCallback(async () => {
         try {
             setLoading(true);
-            const response = await getTasks();
-            setTasks(response.data);
+            const res = await getTasks();
+            setTasks(res.data);
             setApiOk(true);
         } catch (err) {
             console.error(err);
             setApiOk(false);
-            addToast("Unable to load tasks. Is the backend running?", "error");
+            push("Unable to connect to the API.", "error");
         } finally {
             setLoading(false);
         }
-    }, [addToast]);
+    }, [push]);
 
-    useEffect(() => {
-        loadTasks();
-    }, [loadTasks]);
+    useEffect(() => { loadTasks(); }, [loadTasks]);
 
-    // ── Form handlers ─────────────────────────────────────────────────────────
-
-    const handleChange = e => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
-    };
+    // ── Create ────────────────────────────────────────────────────────────────
 
     const handleSubmit = async e => {
         e.preventDefault();
-        if (!formData.title.trim()) return;
-
+        if (!form.title.trim()) return;
+        setSubmitting(true);
         try {
-            await createTask({
-                ...formData,
-                dueDate: formData.dueDate || null
-            });
-            setFormData({ title: "", description: "", status: "pending", priority: "medium", dueDate: "" });
+            await createTask({ ...form, dueDate: form.dueDate || null });
+            const title = form.title;
+            setForm({ title: "", description: "", status: "pending", priority: "medium", dueDate: "" });
             await loadTasks();
-            addToast(`Task "${formData.title}" created!`, "success");
+            push(`"${title}" created.`, "success");
         } catch (err) {
             console.error(err);
-            addToast("Unable to create task.", "error");
+            push("Failed to create task.", "error");
+        } finally {
+            setSubmitting(false);
         }
     };
 
-    // ── Status cycling ────────────────────────────────────────────────────────
+    // ── Status cycle ──────────────────────────────────────────────────────────
 
-    const handleStatusChange = async (task) => {
+    const handleStatusChange = async task => {
         try {
-            const current = STATUS_ORDER.indexOf(task.status);
-            const next    = STATUS_ORDER[(current + 1) % STATUS_ORDER.length];
+            const next = STATUS_NEXT[task.status] ?? "pending";
             await updateTask(task._id, { status: next });
             await loadTasks();
-            addToast(`Status → ${STATUS_META[next].label}`, "info");
+            push(`Status → ${STATUS_CFG[next]?.label}.`, "info");
         } catch (err) {
             console.error(err);
-            addToast("Unable to update task status.", "error");
+            push("Failed to update status.", "error");
         }
     };
 
-    // ── Inline edit save ──────────────────────────────────────────────────────
+    // ── Edit ──────────────────────────────────────────────────────────────────
 
-    const handleSaveEdit = async (id, data) => {
+    const handleEdit = async (id, data) => {
         try {
             await updateTask(id, data);
             await loadTasks();
-            addToast("Task updated successfully!", "success");
+            push("Task updated.", "success");
         } catch (err) {
             console.error(err);
-            addToast("Unable to save changes.", "error");
+            push("Failed to save changes.", "error");
         }
     };
 
-    // ── Delete (with confirmation) ────────────────────────────────────────────
-
-    const handleDeleteRequest = (id, title) => {
-        setDeleteTarget({ id, title });
-    };
+    // ── Delete ────────────────────────────────────────────────────────────────
 
     const handleDeleteConfirm = async () => {
         const { id, title } = deleteTarget;
@@ -378,34 +412,30 @@ function App() {
         try {
             await deleteTask(id);
             await loadTasks();
-            addToast(`"${title}" deleted.`, "success");
+            push(`"${title}" deleted.`, "success");
         } catch (err) {
             console.error(err);
-            addToast("Unable to delete task.", "error");
+            push("Failed to delete task.", "error");
         }
     };
 
-    // ── Stats ─────────────────────────────────────────────────────────────────
+    // ── Derived ───────────────────────────────────────────────────────────────
 
     const stats = {
         total:      tasks.length,
         pending:    tasks.filter(t => t.status === "pending").length,
         inProgress: tasks.filter(t => t.status === "in-progress").length,
         completed:  tasks.filter(t => t.status === "completed").length,
-        overdue:    tasks.filter(isOverdue).length
+        overdue:    tasks.filter(isOverdue).length,
     };
 
-    // ── Filtered tasks ────────────────────────────────────────────────────────
-
-    const filteredTasks = tasks.filter(task => {
-        const matchSearch = !search.trim() ||
-            task.title.toLowerCase().includes(search.toLowerCase()) ||
-            (task.description || "").toLowerCase().includes(search.toLowerCase());
-
-        const matchStatus   = filterStatus   === "all" || task.status   === filterStatus;
-        const matchPriority = filterPriority === "all" || task.priority === filterPriority;
-
-        return matchSearch && matchStatus && matchPriority;
+    const filtered = tasks.filter(t => {
+        const q = search.trim().toLowerCase();
+        return (
+            (!q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q)) &&
+            (filterStatus   === "all" || t.status   === filterStatus) &&
+            (filterPriority === "all" || t.priority === filterPriority)
+        );
     });
 
     // ─── Render ───────────────────────────────────────────────────────────────
@@ -413,81 +443,85 @@ function App() {
     return (
         <div className="app">
 
-            {/* ── Header ── */}
+            {/* Header */}
             <header className="header">
-                <div className="header-brand">
-                    <div className="header-logo">DT</div>
-                    <div className="header-text">
-                        <h1>DevTrack</h1>
-                        <p>Task Management Dashboard</p>
+                <div className="hd-brand">
+                    <div className="hd-logo">
+                        <Icon name="task" size={14} />
                     </div>
+                    <span className="hd-name">DevTrack</span>
+                    <span className="hd-divider" />
+                    <span className="hd-sub">Task Management</span>
                 </div>
 
-                <div className="header-right">
-                    <span className={`api-status${apiOk ? "" : " error"}`}>
-                        <span className="api-status-dot" />
-                        {apiOk ? "API Connected" : "API Offline"}
-                    </span>
+                <div className={`api-pill ${apiOk ? "connected" : "offline"}`}>
+                    <span className="api-dot" />
+                    {apiOk ? "API Connected" : "API Offline"}
                 </div>
             </header>
 
-            {/* ── Main ── */}
-            <main className="container">
+            {/* Main */}
+            <main className="main">
 
                 {/* Stats */}
-                <div className="stats-grid">
-                    <StatCard icon="📋" value={stats.total}      label="Total Tasks"   color="var(--accent-primary)" />
-                    <StatCard icon="⏳" value={stats.pending}    label="Pending"        color="var(--status-pending)" />
-                    <StatCard icon="🔄" value={stats.inProgress} label="In Progress"    color="var(--status-inprogress)" />
-                    <StatCard icon="✅" value={stats.completed}  label="Completed"      color="var(--status-completed)" />
-                    <StatCard icon="🚨" value={stats.overdue}    label="Overdue"        color="var(--priority-high)" />
+                <div className="stats-bar">
+                    <Stat icon="bar"      num={stats.total}      label="Total"       variant="total" />
+                    <Stat icon="list"     num={stats.pending}    label="Pending"     variant="pending" />
+                    <Stat icon="arrow"    num={stats.inProgress} label="In Progress" variant="progress" />
+                    <Stat icon="check"    num={stats.completed}  label="Completed"   variant="completed" />
+                    <Stat icon="alert"    num={stats.overdue}    label="Overdue"     variant="overdue" />
                 </div>
 
-                {/* Two-column layout */}
-                <div className="page-layout">
+                {/* Workspace */}
+                <div className="workspace">
 
-                    {/* ── Left: Create Task Form ── */}
+                    {/* Sidebar — Create Form */}
                     <aside>
-                        <section className="card">
-                            <h2 className="card-title">
-                                <span className="card-title-icon">➕</span>
-                                Create New Task
-                            </h2>
+                        <div className="panel">
+                            <div className="panel-hd">
+                                <span className="panel-hd-icon">
+                                    <Icon name="plus" size={14} />
+                                </span>
+                                <h2>New Task</h2>
+                            </div>
 
-                            <form onSubmit={handleSubmit}>
-                                <div className="form-group">
-                                    <label htmlFor="title">Task Title *</label>
+                            <form className="form-body" onSubmit={handleSubmit}>
+                                <div className="field">
+                                    <label htmlFor="f-title">
+                                        Title <span className="req">*</span>
+                                    </label>
                                     <input
-                                        id="title"
+                                        id="f-title"
                                         type="text"
                                         name="title"
-                                        value={formData.title}
-                                        onChange={handleChange}
+                                        value={form.title}
+                                        onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
                                         placeholder="Enter task title"
                                         required
+                                        autoComplete="off"
                                     />
                                 </div>
 
-                                <div className="form-group">
-                                    <label htmlFor="description">Description</label>
+                                <div className="field">
+                                    <label htmlFor="f-desc">Description</label>
                                     <textarea
-                                        id="description"
+                                        id="f-desc"
                                         name="description"
-                                        value={formData.description}
-                                        onChange={handleChange}
-                                        placeholder="Describe the task..."
+                                        value={form.description}
+                                        onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+                                        placeholder="Optional description…"
                                         rows={3}
                                     />
                                 </div>
 
-                                <div className="form-row">
-                                    <div className="form-group">
-                                        <label htmlFor="status">Status</label>
+                                <div className="field-row">
+                                    <div className="field">
+                                        <label htmlFor="f-status">Status</label>
                                         <select
-                                            id="status"
+                                            id="f-status"
                                             name="status"
-                                            value={formData.status}
-                                            onChange={handleChange}
+                                            value={form.status}
+                                            onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
                                         >
                                             <option value="pending">Pending</option>
                                             <option value="in-progress">In Progress</option>
@@ -495,136 +529,154 @@ function App() {
                                         </select>
                                     </div>
 
-                                    <div className="form-group">
-                                        <label htmlFor="priority">Priority</label>
+                                    <div className="field">
+                                        <label htmlFor="f-priority">Priority</label>
                                         <select
-                                            id="priority"
+                                            id="f-priority"
                                             name="priority"
-                                            value={formData.priority}
-                                            onChange={handleChange}
+                                            value={form.priority}
+                                            onChange={e => setForm(p => ({ ...p, priority: e.target.value }))}
                                         >
-                                            <option value="low">🟢 Low</option>
-                                            <option value="medium">🟡 Medium</option>
-                                            <option value="high">🔴 High</option>
+                                            <option value="low">Low</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="high">High</option>
                                         </select>
                                     </div>
                                 </div>
 
-                                <div className="form-group">
-                                    <label htmlFor="dueDate">Due Date</label>
+                                <div className="field">
+                                    <label htmlFor="f-due">Due Date</label>
                                     <input
-                                        id="dueDate"
+                                        id="f-due"
                                         type="date"
                                         name="dueDate"
-                                        value={formData.dueDate}
-                                        onChange={handleChange}
+                                        value={form.dueDate}
+                                        onChange={e => setForm(p => ({ ...p, dueDate: e.target.value }))}
                                     />
                                 </div>
 
-                                <button type="submit" className="btn-primary">
-                                    ➕ Add Task
+                                <button
+                                    type="submit"
+                                    className="btn-md btn-primary btn-full"
+                                    disabled={submitting || !form.title.trim()}
+                                >
+                                    <Icon name="plus" size={14} />
+                                    {submitting ? "Creating…" : "Create Task"}
                                 </button>
                             </form>
-                        </section>
+                        </div>
                     </aside>
 
-                    {/* ── Right: Filter + Task List ── */}
-                    <div className="tasks-section">
+                    {/* Right — Task list */}
+                    <div className="list-col">
 
-                        {/* Filter Bar */}
-                        <div className="filter-bar">
-                            <div className="search-wrap">
-                                <span className="search-icon">🔍</span>
+                        {/* Toolbar */}
+                        <div className="toolbar">
+                            <div className="search-row">
+                                <Icon name="search" size={14} />
                                 <input
                                     type="text"
-                                    className="search-input"
-                                    placeholder="Search tasks by title or description…"
                                     value={search}
                                     onChange={e => setSearch(e.target.value)}
+                                    placeholder="Search tasks…"
                                     aria-label="Search tasks"
                                 />
+                                {search && (
+                                    <button
+                                        className="search-clear"
+                                        onClick={() => setSearch("")}
+                                        type="button"
+                                        aria-label="Clear search"
+                                    >
+                                        <Icon name="x" size={10} />
+                                    </button>
+                                )}
                             </div>
 
                             <div className="filter-row">
-                                <div className="filter-chips">
-                                    {[
-                                        { value: "all",         label: "All",         cls: "" },
-                                        { value: "pending",     label: "⏳ Pending",  cls: "chip-pending" },
-                                        { value: "in-progress", label: "🔄 In Progress", cls: "chip-inprogress" },
-                                        { value: "completed",   label: "✅ Completed", cls: "chip-completed" }
-                                    ].map(opt => (
-                                        <button
-                                            key={opt.value}
-                                            className={`filter-chip ${opt.cls}${filterStatus === opt.value ? " active" : ""}`}
-                                            onClick={() => setFilterStatus(opt.value)}
-                                            type="button"
-                                        >
-                                            {opt.label}
-                                        </button>
-                                    ))}
+                                <div className="filter-group">
+                                    <span className="filter-label">Status</span>
+                                    <div className="filter-seg">
+                                        {STATUS_TABS.map(tab => (
+                                            <button
+                                                key={tab.key}
+                                                type="button"
+                                                className={`fseg-btn${filterStatus === tab.key ? " is-active" : ""}`}
+                                                onClick={() => setFilterStatus(tab.key)}
+                                            >
+                                                {tab.label}
+                                                {tab.key !== "all" && (
+                                                    <span className="fcnt">
+                                                        {tab.key === "pending"      ? stats.pending
+                                                         : tab.key === "in-progress" ? stats.inProgress
+                                                         : stats.completed}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
 
-                                <div className="filter-divider" />
+                                <span className="filter-vdivider" />
 
-                                <div className="filter-chips">
-                                    {[
-                                        { value: "all",    label: "All" },
-                                        { value: "high",   label: "🔴 High",   cls: "chip-high" },
-                                        { value: "medium", label: "🟡 Medium", cls: "chip-medium" },
-                                        { value: "low",    label: "🟢 Low",    cls: "chip-low" }
-                                    ].map(opt => (
-                                        <button
-                                            key={opt.value}
-                                            className={`filter-chip ${opt.cls || ""}${filterPriority === opt.value ? " active" : ""}`}
-                                            onClick={() => setFilterPriority(opt.value)}
-                                            type="button"
-                                        >
-                                            {opt.label}
-                                        </button>
-                                    ))}
+                                <div className="filter-group">
+                                    <span className="filter-label">Priority</span>
+                                    <div className="filter-seg">
+                                        {PRIORITY_TABS.map(tab => (
+                                            <button
+                                                key={tab.key}
+                                                type="button"
+                                                className={`fseg-btn${filterPriority === tab.key ? " is-active" : ""}`}
+                                                onClick={() => setFilterPriority(tab.key)}
+                                            >
+                                                {tab.dot && <span className={`pdot ${tab.dot}`} />}
+                                                {tab.label}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Section header */}
-                        <div className="section-header">
+                        {/* List header */}
+                        <div className="list-hd">
                             <h2>Tasks</h2>
-                            <span className="task-count-badge">
-                                {filteredTasks.length} of {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+                            <span className="list-count">
+                                {filtered.length === tasks.length
+                                    ? `${tasks.length} task${tasks.length !== 1 ? "s" : ""}`
+                                    : `${filtered.length} of ${tasks.length}`}
                             </span>
                         </div>
 
-                        {/* Task list */}
+                        {/* Content */}
                         {loading ? (
-                            <div className="loading-wrap">
+                            <div className="state-box">
                                 <div className="spinner" />
-                                <span>Loading tasks…</span>
+                                <p className="state-sub">Loading tasks…</p>
                             </div>
-                        ) : filteredTasks.length === 0 ? (
-                            <div className="empty-state">
-                                <div className="empty-state-icon">
-                                    {tasks.length === 0 ? "📋" : "🔍"}
+                        ) : filtered.length === 0 ? (
+                            <div className="state-box">
+                                <div className="state-ico">
+                                    <Icon name={tasks.length === 0 ? "task" : "search"} size={34} />
                                 </div>
-                                <h3>
-                                    {tasks.length === 0
-                                        ? "No tasks yet"
-                                        : "No matching tasks"}
-                                </h3>
-                                <p>
+                                <p className="state-title">
+                                    {tasks.length === 0 ? "No tasks yet" : "No results found"}
+                                </p>
+                                <p className="state-sub">
                                     {tasks.length === 0
                                         ? "Create your first task using the form on the left."
-                                        : "Try adjusting your search or filter settings."}
+                                        : "Try adjusting your search query or filters."}
                                 </p>
                             </div>
                         ) : (
                             <div className="task-list">
-                                {filteredTasks.map(task => (
+                                {filtered.map(task => (
                                     <TaskCard
                                         key={task._id}
                                         task={task}
                                         onStatusChange={handleStatusChange}
-                                        onDelete={handleDeleteRequest}
-                                        onSaveEdit={handleSaveEdit}
+                                        onDelete={(id, title) => setDeleteTarget({ id, title })}
+                                        onEdit={handleEdit}
                                     />
                                 ))}
                             </div>
@@ -633,20 +685,17 @@ function App() {
                 </div>
             </main>
 
-            {/* ── Delete Confirmation Modal ── */}
+            {/* Delete modal */}
             {deleteTarget && (
                 <ConfirmModal
-                    title="Delete Task"
-                    message={`Are you sure you want to delete "${deleteTarget.title}"? This action cannot be undone.`}
+                    taskTitle={deleteTarget.title}
                     onConfirm={handleDeleteConfirm}
                     onCancel={() => setDeleteTarget(null)}
                 />
             )}
 
-            {/* ── Toast Notifications ── */}
-            <ToastContainer toasts={toasts} />
+            {/* Toasts */}
+            <ToastStack toasts={toasts} />
         </div>
     );
 }
-
-export default App;
