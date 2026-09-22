@@ -1,0 +1,52 @@
+services:
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    image: devtrack-api:1.0.0
+
+    container_name: devtrack-api
+
+    ports:
+      - "3000:3000"
+
+    env_file:
+      - ./.env
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/health', res => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+
+    image: devtrack-frontend:1.0.0
+
+    container_name: devtrack-frontend
+
+    ports:
+      - "5173:8080"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    restart: unless-stopped
